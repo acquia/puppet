@@ -83,7 +83,23 @@ describe Puppet::Resource::Catalog, "when compiling" do
   it "should have a server_version attribute" do
     @catalog = Puppet::Resource::Catalog.new("host")
     @catalog.server_version = 5
-    @catalog.server_version.should == 5
+    expect(@catalog.server_version).to eq(5)
+  end
+
+  it "defaults code_id to nil" do
+    catalog = Puppet::Resource::Catalog.new("host")
+    expect(catalog.code_id).to be_nil
+  end
+
+  it "should include a catalog_uuid" do
+    allow(SecureRandom).to receive(:uuid).and_return("827a74c8-cf98-44da-9ff7-18c5e4bee41e")
+    catalog = Puppet::Resource::Catalog.new("host")
+    expect(catalog.catalog_uuid).to eq("827a74c8-cf98-44da-9ff7-18c5e4bee41e")
+  end
+
+  it "should include the current catalog_format" do
+    catalog = Puppet::Resource::Catalog.new("host")
+    expect(catalog.catalog_format).to eq(2)
   end
 
   describe "when compiling" do
@@ -152,6 +168,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
       @original.add_edge(@middle, @bottom)
       @original.add_edge(@bottom, @bottomobject)
 
+      @original.catalog_format = 1
       @catalog = @original.to_ral
     end
 
@@ -162,6 +179,18 @@ describe Puppet::Resource::Catalog, "when compiling" do
         # result tries to call `each` on the resource, and that raises.
         @catalog.resource(resource.ref).must be_a_kind_of(Puppet::Type)
       end
+    end
+
+    it "should raise if an unknown resource is being converted" do
+      @new_res = Puppet::Resource.new "Unknown", "type", :kind => 'compilable_type'
+      @resource_array = [@new_res]
+
+      @original.add_resource(*@resource_array)
+      @original.add_edge(@bottomobject, @new_res)
+
+      @original.catalog_format = 2
+
+      expect { @original.to_ral }.to raise_error(Puppet::Error, "Resource type 'Unknown' was not found")
     end
 
     it "should copy the tag list to the new catalog" do

@@ -22,31 +22,62 @@
             "required": ["api_version"],
             "additionalProperties": false
         },
-        "data": {
-            "description": "The catalog data itself",
-            "type": "object",
-            "properties": {
-                "tags": {
-                    "description": "Tags: regex is from http://docs.puppetlabs.com/puppet/3/reference/lang_reserved.html",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "pattern": "^[a-z0-9_][a-z0-9_:\.\-]*$"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
-                },
-                "environment": {
-                    "type": "string"
-                },
-                "resources": {
-                    "description": "The array of resources in the catalog",
-                    "type": "array",
-                    "items": {
+        "version": {
+            "type": ["string", "integer"]
+        },
+        "code_id": {
+            "type": ["string", "null"]
+        },
+        "catalog_uuid": {
+            "type": "string"
+        },
+        "catalog_format": {
+            "type": "integer"
+        },
+        "environment": {
+            "type": "string"
+        },
+        "resources": {
+            "description": "The array of resources in the catalog",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                   "type": {
+                       "type": "string"
+                   },
+                    "title": {
+                        "type": "string"
+                    },
+                    "line": {
+                        "type": "integer"
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "file": {
+                        "type": "string"
+                    },
+                    "exported": {
+                        "type": "boolean"
+                    },
+                    "sensitive_parameters": {
+                        "description": "An optional list of resource parameters to be treated as sensitive.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "tags": {
+                        "description": "Tags: regex is from https://puppet.com/docs/puppet/latest/lang_reserved.html",
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "pattern": "\\A[[:alnum:]_][[:alnum:]_:.-]*\\Z"
+                        }
+                    },
+                    "parameters": {
+                        "description": "Parameters: regex is from https://puppet.com/docs/puppet/latest/lang_reserved.html",
                         "type": "object",
                         "properties": {
                            "type": {

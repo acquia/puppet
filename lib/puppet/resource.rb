@@ -17,14 +17,36 @@ class Puppet::Resource
 
   extend Puppet::Util::Pson
   include Enumerable
-  attr_accessor :file, :line, :catalog, :exported, :virtual, :validate_parameters, :strict
-  attr_reader :type, :title
+  attr_accessor :file, :line, :catalog, :exported, :virtual, :strict, :kind
+  attr_reader :type, :title, :parameters
+
+  # @!attribute [rw] sensitive_parameters
+  #   @api private
+  #   @return [Array<Symbol>] A list of parameters to be treated as sensitive
+  attr_accessor :sensitive_parameters
+
+  # @deprecated
+  attr_accessor :validate_parameters
 
   require 'puppet/indirector'
   extend Puppet::Indirector
   indirects :resource, :terminus_class => :ral
 
-  ATTRIBUTES = [:file, :line, :exported]
+  EMPTY_ARRAY = [].freeze
+  EMPTY_HASH = {}.freeze
+
+  ATTRIBUTES = [:file, :line, :exported, :kind].freeze
+  TYPE_CLASS = 'Class'.freeze
+  TYPE_NODE  = 'Node'.freeze
+  TYPE_SITE  = 'Site'.freeze
+
+  CLASS_STRING = 'class'.freeze
+  DEFINED_TYPE_STRING = 'defined_type'.freeze
+  COMPILABLE_TYPE_STRING = 'compilable_type'.freeze
+  UNKNOWN_TYPE_STRING  = 'unknown'.freeze
+
+  PCORE_TYPE_KEY = '__ptype'.freeze
+  VALUE_KEY = 'value'.freeze
 
   def self.from_data_hash(data)
     raise ArgumentError, "No resource type provided in serialized data" unless type = data['type']
@@ -163,6 +185,18 @@ class Puppet::Resource
     resource_type.is_a?(Class)
   end
 
+  def self.to_kind(resource_type)
+    if resource_type == CLASS_STRING
+      CLASS_STRING
+    elsif resource_type.is_a?(Puppet::Resource::Type) && resource_type.type == :definition
+      DEFINED_TYPE_STRING
+    elsif resource_type.is_a?(Puppet::CompilableResourceType)
+      COMPILABLE_TYPE_STRING
+    else
+      UNKNOWN_TYPE_STRING
+    end
+  end
+
   # Iterate over each param/value pair, as required for Enumerable.
   def each
     parameters.each { |p,v| yield p, v }
@@ -211,14 +245,20 @@ class Puppet::Resource
   # @api public
   def initialize(type, title = nil, attributes = {})
     @parameters = {}
-    if type.is_a?(Class) && type < Puppet::Type
-      # Set the resource type to avoid an expensive `known_resource_types`
-      # lookup.
-      self.resource_type = type
-      # From this point on, the constructor behaves the same as if `type` had
-      # been passed as a symbol.
-      type = type.name
-    end
+    @sensitive_parameters = []
+    if type.is_a?(Puppet::Resource)
+      # Copy constructor. Let's avoid munging, extracting, tagging, etc
+      src = type
+      self.file = src.file
+      self.line = src.line
+      self.kind = src.kind
+      self.exported = src.exported
+      self.virtual = src.virtual
+      self.set_tags(src)
+      self.environment = src.environment
+      @rstype = src.resource_type
+      @type = src.type
+      @title = src.title
 
     # Set things like strictness first.
     attributes.each do |attr, value|
@@ -253,6 +293,65 @@ class Puppet::Resource
       else
         raise ArgumentError, "Invalid resource type #{type}"
       end
+      @sensitive_parameters.replace(type.sensitive_parameters)
+    else
+      if type.is_a?(Hash)
+        #TRANSLATORS 'Puppet::Resource.new' should not be translated
+        raise ArgumentError, _("Puppet::Resource.new does not take a hash as the first argument.") + ' ' +
+          _("Did you mean (%{type}, %{title}) ?") %
+              { type: (type[:type] || type["type"]).inspect, title: (type[:title] || type["title"]).inspect }
+      end
+
+      # In order to avoid an expensive search of 'known_resource_types" and
+      # to obey/preserve the implementation of the resource's type - if the
+      # given type is a resource type implementation (one of):
+      #   * a "classic" 3.x ruby plugin
+      #   * a compatible implementation (e.g. loading from pcore metadata)
+      #   * a resolved user defined type
+      #
+      # ...then, modify the parameters to the "old" (agent side compatible) way
+      # of describing the type/title with string/symbols.
+      #
+      # TODO: Further optimizations should be possible as the "type juggling" is
+      # not needed when the type implementation is known.
+      #
+      if type.is_a?(Puppet::CompilableResourceType) || type.is_a?(Puppet::Resource::Type)
+        # set the resource type implementation
+        self.resource_type = type
+        # set the type name to the symbolic name
+        type = type.name
+      end
+      @exported = false
+
+      # Set things like environment, strictness first.
+      attributes.each do |attr, value|
+        next if attr == :parameters
+        send(attr.to_s + "=", value)
+      end
+
+      @type, @title = self.class.type_and_title(type, title)
+
+      rt = resource_type
+
+      self.kind = self.class.to_kind(rt) unless kind
+      if strict? && rt.nil?
+        if self.class?
+          raise ArgumentError, _("Could not find declared class %{title}") % { title: title }
+        else
+          raise ArgumentError, _("Invalid resource type %{type}") % { type: type }
+        end
+      end
+
+      params = attributes[:parameters]
+      unless params.nil? || params.empty?
+        extract_parameters(params)
+        if rt && rt.respond_to?(:deprecate_params)
+          rt.deprecate_params(title, params)
+        end
+      end
+
+      tag(self.type)
+      tag_if_valid(self.title)
     end
   end
 
@@ -341,10 +440,24 @@ class Puppet::Resource
     ref
   end
 
-  # Convert our resource to a RAL resource instance.  Creates component
-  # instances for resource types that don't exist.
+  # Convert our resource to a RAL resource instance. Creates component
+  # instances for resource types that are not of a compilable_type kind. In case
+  # the resource doesn’t exist and it’s compilable_type kind, raise an error.
+  # There are certain cases where a resource won't be in a catalog, such as 
+  # when we create a resource directly by using Puppet::Resource.new(...), so we 
+  # must check its kind before deciding whether the catalog format is of an older
+  # version or not.
   def to_ral
-    typeklass = Puppet::Type.type(self.type) || Puppet::Type.type(:component)
+    if self.kind == COMPILABLE_TYPE_STRING
+      typeklass = Puppet::Type.type(self.type)
+    elsif self.catalog && self.catalog.catalog_format >= 2
+      typeklass = Puppet::Type.type(:component)
+    else
+      typeklass =  Puppet::Type.type(self.type) || Puppet::Type.type(:component)
+    end
+
+    raise(Puppet::Error, "Resource type '#{self.type}' was not found") unless typeklass
+
     typeklass.new(self)
   end
 

@@ -569,7 +569,54 @@ describe Puppet::Configurer do
     it "should use the Catalog class to get its catalog" do
       Puppet::Resource::Catalog.indirection.expects(:find).returns @catalog
 
-      @agent.retrieve_catalog({})
+      it "should return nil when the catalog's environment doesn't match the agent specified environment" do
+        Puppet[:environment] = 'second_env'
+        configurer = Puppet::Configurer.new
+
+        catalog = Puppet::Resource::Catalog.new(node_name, Puppet::Node::Environment.remote("production"))
+        expects_new_catalog_only(catalog)
+
+        expect(Puppet).to receive(:err).with("Not using catalog because its environment 'production' does not match agent specified environment 'second_env' and strict_environment_mode is set")
+        expect(configurer.run).to be_nil
+      end
+
+      it "should return 0 when the catalog's environment matches the agent specified environment" do
+        expects_new_catalog_only(catalog)
+
+        expect(configurer.run).to eq(0)
+      end
+
+      describe "and a cached catalog is explicitly requested" do
+        before do
+          Puppet.settings[:use_cached_catalog] = true
+        end
+
+        it "should return nil when the cached catalog's environment doesn't match the agent specified environment" do
+          Puppet[:environment] = 'second_env'
+          configurer = Puppet::Configurer.new
+
+          catalog = Puppet::Resource::Catalog.new(node_name, Puppet::Node::Environment.remote("production"))
+          expects_cached_catalog_only(catalog)
+
+          expect(Puppet).to receive(:err).with("Not using catalog because its environment 'production' does not match agent specified environment 'second_env' and strict_environment_mode is set")
+          expect(configurer.run).to be_nil
+        end
+
+        it "should proceed with the cached catalog if its environment matches the local environment" do
+          expects_cached_catalog_only(catalog)
+
+          expect(configurer.run).to eq(0)
+        end
+      end
+    end
+
+    it "should set its cached_catalog_status to 'not_used' when downloading a new catalog" do
+      expect(Puppet::Resource::Catalog.indirection).to receive(:find).with(anything, hash_including(ignore_cache: true)).and_return(catalog)
+
+      options = {}
+      configurer.run(options)
+
+      expect(options[:report].cached_catalog_status).to eq('not_used')
     end
 
     it "should use its node_name_value to retrieve the catalog" do

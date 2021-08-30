@@ -243,6 +243,10 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
   def initialize(name = nil, environment = Puppet::Node::Environment::NONE)
     super()
     @name = name
+    @catalog_uuid = SecureRandom.uuid
+    @catalog_format = 2
+    @metadata = {}
+    @recursive_metadata = {}
     @classes = []
     @resource_table = {}
     @resources = []
