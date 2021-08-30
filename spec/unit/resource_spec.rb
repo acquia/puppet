@@ -844,6 +844,13 @@ describe Puppet::Resource do
       expect(Puppet::Resource.from_data_hash(JSON.parse(resource.to_json)).kind).to eq('im_a_file')
     end
 
+    it "should include the kind if one is set" do
+      resource = Puppet::Resource.new("File", "/foo")
+      resource.kind = 'im_a_file'
+
+      expect(Puppet::Resource.from_data_hash(JSON.parse(resource.to_json)).kind).to eq('im_a_file')
+    end
+
     it "should include the 'exported' value if one is set" do
       resource = Puppet::Resource.new("File", "/foo")
       resource.exported = true
