@@ -719,10 +719,8 @@ describe Puppet::Configurer do
           expect(@agent.run).to be_nil
         end
 
-        it "should proceed with the cached catalog if its environment matchs the local environment" do
-          Puppet.settings[:use_cached_catalog] = true
-          @agent.instance_variable_set(:@environment, 'production')
-          expects_cached_catalog_only(@catalog)
+        it "should proceed with the cached catalog if its environment matches the local environment" do
+          expects_cached_catalog_only(catalog)
 
           expect(@agent.run).to eq(0)
         end

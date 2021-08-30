@@ -42,6 +42,9 @@
                     "line": {
                         "type": "integer"
                     },
+                    "kind": {
+                        "type": "string"
+                    },
                     "file": {
                         "type": "string"
                     },

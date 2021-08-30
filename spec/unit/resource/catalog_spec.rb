@@ -97,6 +97,11 @@ describe Puppet::Resource::Catalog, "when compiling" do
     expect(catalog.catalog_uuid).to eq("827a74c8-cf98-44da-9ff7-18c5e4bee41e")
   end
 
+  it "should include the current catalog_format" do
+    catalog = Puppet::Resource::Catalog.new("host")
+    expect(catalog.catalog_format).to eq(2)
+  end
+
   describe "when compiling" do
     it "should accept tags" do
       config = Puppet::Resource::Catalog.new("mynode")
@@ -168,6 +173,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
       @original.add_edge(@middle, @bottom)
       @original.add_edge(@bottom, @bottomobject)
 
+      @original.catalog_format = 1
       @catalog = @original.to_ral
     end
 
@@ -178,6 +184,18 @@ describe Puppet::Resource::Catalog, "when compiling" do
         # result tries to call `each` on the resource, and that raises.
         expect(@catalog.resource(resource.ref)).to be_a_kind_of(Puppet::Type)
       end
+    end
+
+    it "should raise if an unknown resource is being converted" do
+      @new_res = Puppet::Resource.new "Unknown", "type", :kind => 'compilable_type'
+      @resource_array = [@new_res]
+
+      @original.add_resource(*@resource_array)
+      @original.add_edge(@bottomobject, @new_res)
+
+      @original.catalog_format = 2
+
+      expect { @original.to_ral }.to raise_error(Puppet::Error, "Resource type 'Unknown' was not found")
     end
 
     it "should copy the tag list to the new catalog" do
