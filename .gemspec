@@ -52,4 +52,5 @@ Gem::Specification.new do |s|
   end
   s.add_dependency("psych")
   s.add_dependency("xmlrpc")
+  s.add_dependency("racc")
 end
