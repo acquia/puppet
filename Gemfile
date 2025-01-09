@@ -15,7 +15,7 @@ platforms :ruby do
   gem 'pry', :group => :development
   gem 'yard', :group => :development
   gem 'redcarpet', '~> 2.0', :group => :development
-  gem "racc", "1.4.9", :group => :development
+  gem "racc", "1.8.1", :group => :development
 
   # To enable the augeas feature, use this gem.
   # Note that it is a native gem, so the augeas headers/libs
