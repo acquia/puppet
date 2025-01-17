@@ -1,5 +1,7 @@
-require 'puppet'
-require 'puppet/indirector'
+# frozen_string_literal: true
+
+require_relative '../../puppet'
+require_relative '../../puppet/indirector'
 
 # This class is used to report what happens on a client.
 # There are two types of data in a report; _Logs_ and _Metrics_.
@@ -35,8 +37,10 @@ require 'puppet/indirector'
 #
 # @api public
 class Puppet::Transaction::Report
+  include Puppet::Util::PsychSupport
   extend Puppet::Indirector
 
+  STATES_FOR_EXCLUSION_FROM_REPORT = [:failed, :failed_to_restart, :out_of_sync, :skipped].freeze
   indirects :report, :terminus_class => :processor
 
   # The version of the configuration
@@ -48,6 +52,24 @@ class Puppet::Transaction::Report
   # @return [String] uuid
   attr_accessor :transaction_uuid
 
+  # The id of the code input to the compiler.
+  attr_accessor :code_id
+
+  # The id of the job responsible for this run.
+  attr_accessor :job_id
+
+  # A master generated catalog uuid, useful for connecting a single catalog to multiple reports.
+  attr_accessor :catalog_uuid
+
+  # Whether a cached catalog was used in the run, and if so, the reason that it was used.
+  # @return [String] One of the values: 'not_used', 'explicitly_requested',
+  # or 'on_failure'
+  attr_accessor :cached_catalog_status
+
+  # Contains the name and port of the server that was successfully contacted
+  # @return [String] a string of the format 'servername:port'
+  attr_accessor :server_used
+
   # The host name for which the report is generated
   # @return [String] the host name
   attr_accessor :host
@@ -55,6 +77,15 @@ class Puppet::Transaction::Report
   # The name of the environment the host is in
   # @return [String] the environment name
   attr_accessor :environment
+
+  # The name of the environment the agent initially started in
+  # @return [String] the environment name
+  attr_accessor :initial_environment
+
+  # Whether there are changes that we decided not to apply because of noop
+  # @return [Boolean]
+  #
+  attr_accessor :noop_pending
 
   # A hash with a map from resource to status
   # @return [Hash{String => Puppet::Resource::Status}] Resource name to status.
@@ -75,12 +106,6 @@ class Puppet::Transaction::Report
   #
   attr_reader :time
 
-  # The 'kind' of report is the name of operation that triggered the report to be produced.
-  # Typically "apply".
-  # @return [String] the kind of operation that triggered the generation of the report.
-  #
-  attr_reader :kind
-
   # The status of the client run is an enumeration: 'failed', 'changed' or 'unchanged'
   # @return [String] the status of the run - one of the values 'failed', 'changed', or 'unchanged'
   #
@@ -97,15 +122,31 @@ class Puppet::Transaction::Report
   #
   attr_reader :report_format
 
+  # Whether the puppet run was started in noop mode
+  # @return [Boolean]
+  #
+  attr_reader :noop
+
+  # @!attribute [r] corrective_change
+  #   @return [Boolean] true if the report contains any events and resources that had
+  #      corrective changes, including noop corrective changes.
+  attr_reader :corrective_change
+
+  # @return [Boolean] true if one or more resources attempted to generate
+  #   resources and failed
+  #
+  attr_accessor :resources_failed_to_generate
+
+  # @return [Boolean] true if the transaction completed it's evaluate
+  #
+  attr_accessor :transaction_completed
+
+  TOTAL = "total"
+
   def self.from_data_hash(data)
-    obj = self.allocate
+    obj = allocate
     obj.initialize_from_hash(data)
     obj
-  end
-
-  def self.from_pson(data)
-    Puppet.deprecation_warning("from_pson is being removed in favour of from_data_hash.")
-    self.from_data_hash(data)
   end
 
   def as_logging_destination(&block)
@@ -119,16 +160,20 @@ class Puppet::Transaction::Report
   end
 
   # @api private
-  def add_times(name, value)
-    @external_times[name] = value
+  def add_times(name, value, accumulate = true)
+    if @external_times[name] && accumulate
+      @external_times[name] += value
+    else
+      @external_times[name] = value
+    end
   end
 
   # @api private
   def add_metric(name, hash)
     metric = Puppet::Util::Metric.new(name)
 
-    hash.each do |name, value|
-      metric.newvalue(name, value)
+    hash.each do |metric_name, value|
+      metric.newvalue(metric_name, value)
     end
 
     @metrics[metric.name] = metric
@@ -142,7 +187,10 @@ class Puppet::Transaction::Report
 
   # @api private
   def compute_status(resource_metrics, change_metric)
-    if (resource_metrics["failed"] || 0) > 0
+    if resources_failed_to_generate ||
+       !transaction_completed ||
+       (resource_metrics["failed"] || 0) > 0 ||
+       (resource_metrics["failed_to_restart"] || 0) > 0
       'failed'
     elsif change_metric > 0
       'changed'
@@ -152,37 +200,52 @@ class Puppet::Transaction::Report
   end
 
   # @api private
+  def has_noop_events?(resource)
+    resource.events.any? { |event| event.status == 'noop' }
+  end
+
+  # @api private
   def prune_internal_data
-    resource_statuses.delete_if {|name,res| res.resource_type == 'Whit'}
+    resource_statuses.delete_if { |_name, res| res.resource_type == 'Whit' }
   end
 
   # @api private
   def finalize_report
     prune_internal_data
+    calculate_report_corrective_change
 
     resource_metrics = add_metric(:resources, calculate_resource_metrics)
     add_metric(:time, calculate_time_metrics)
     change_metric = calculate_change_metric
-    add_metric(:changes, {"total" => change_metric})
+    add_metric(:changes, { TOTAL => change_metric })
     add_metric(:events, calculate_event_metrics)
     @status = compute_status(resource_metrics, change_metric)
+    @noop_pending = @resource_statuses.any? { |_name, res| has_noop_events?(res) }
   end
 
   # @api private
-  def initialize(kind, configuration_version=nil, environment=nil, transaction_uuid=nil)
+  def initialize(configuration_version = nil, environment = nil, transaction_uuid = nil, job_id = nil, start_time = Time.now)
     @metrics = {}
     @logs = []
     @resource_statuses = {}
     @external_times ||= {}
     @host = Puppet[:node_name_value]
-    @time = Time.now
-    @kind = kind
-    @report_format = 4
+    @time = start_time
+    @report_format = 12
     @puppet_version = Puppet.version
     @configuration_version = configuration_version
     @transaction_uuid = transaction_uuid
+    @code_id = nil
+    @job_id = job_id
+    @catalog_uuid = nil
+    @cached_catalog_status = nil
+    @server_used = nil
     @environment = environment
     @status = 'failed' # assume failed until the report is finalized
+    @noop = Puppet[:noop]
+    @noop_pending = false
+    @corrective_change = false
+    @transaction_completed = false
   end
 
   # @api private
@@ -193,49 +256,107 @@ class Puppet::Transaction::Report
     @transaction_uuid = data['transaction_uuid']
     @environment = data['environment']
     @status = data['status']
+    @transaction_completed = data['transaction_completed']
+    @noop = data['noop']
+    @noop_pending = data['noop_pending']
     @host = data['host']
     @time = data['time']
+    @corrective_change = data['corrective_change']
+
+    if data['server_used']
+      @server_used = data['server_used']
+    elsif data['master_used']
+      @server_used = data['master_used']
+    end
+
+    if data['catalog_uuid']
+      @catalog_uuid = data['catalog_uuid']
+    end
+
+    if data['job_id']
+      @job_id = data['job_id']
+    end
+
+    if data['code_id']
+      @code_id = data['code_id']
+    end
+
+    if data['cached_catalog_status']
+      @cached_catalog_status = data['cached_catalog_status']
+    end
+
     if @time.is_a? String
       @time = Time.parse(@time)
     end
-    @kind = data['kind']
 
     @metrics = {}
     data['metrics'].each do |name, hash|
-      @metrics[name] = Puppet::Util::Metric.from_data_hash(hash)
+      # Older versions contain tags that causes Psych to create instances directly
+      @metrics[name] = hash.is_a?(Puppet::Util::Metric) ? hash : Puppet::Util::Metric.from_data_hash(hash)
     end
 
     @logs = data['logs'].map do |record|
-      Puppet::Util::Log.from_data_hash(record)
+      # Older versions contain tags that causes Psych to create instances directly
+      record.is_a?(Puppet::Util::Log) ? record : Puppet::Util::Log.from_data_hash(record)
     end
 
     @resource_statuses = {}
-    data['resource_statuses'].map do |record|
-      if record[1] == {}
-        status = nil
-      else
-        status = Puppet::Resource::Status.from_data_hash(record[1])
-      end
-      @resource_statuses[record[0]] = status
+    data['resource_statuses'].map do |key, rs|
+      @resource_statuses[key] =
+        if rs == Puppet::Resource::EMPTY_HASH
+          nil
+        elsif rs.is_a?(Puppet::Resource::Status)
+          # Older versions contain tags that causes Psych to create instances
+          # directly
+          rs
+        else
+          Puppet::Resource::Status.from_data_hash(rs)
+        end
     end
   end
 
+  def resource_unchanged?(rs)
+    STATES_FOR_EXCLUSION_FROM_REPORT.each do |state|
+      return false if rs.send(state)
+    end
+    true
+  end
+
+  def calculate_resource_statuses
+    resource_statuses = if Puppet[:exclude_unchanged_resources]
+                          @resource_statuses.reject { |_key, rs| resource_unchanged?(rs) }
+                        else
+                          @resource_statuses
+                        end
+    resource_statuses.transform_values { |rs| rs.nil? ? nil : rs.to_data_hash }
+  end
+
   def to_data_hash
-    {
+    hash = {
       'host' => @host,
       'time' => @time.iso8601(9),
       'configuration_version' => @configuration_version,
       'transaction_uuid' => @transaction_uuid,
       'report_format' => @report_format,
       'puppet_version' => @puppet_version,
-      'kind' => @kind,
       'status' => @status,
+      'transaction_completed' => @transaction_completed,
+      'noop' => @noop,
+      'noop_pending' => @noop_pending,
       'environment' => @environment,
-
-      'logs' => @logs,
-      'metrics' => @metrics,
-      'resource_statuses' => @resource_statuses,
+      'logs' => @logs.map(&:to_data_hash),
+      'metrics' => @metrics.transform_values(&:to_data_hash),
+      'resource_statuses' => calculate_resource_statuses,
+      'corrective_change' => @corrective_change,
     }
+
+    # The following is include only when set
+    hash['server_used'] = @server_used unless @server_used.nil?
+    hash['catalog_uuid'] = @catalog_uuid unless @catalog_uuid.nil?
+    hash['code_id'] = @code_id unless @code_id.nil?
+    hash['job_id'] = @job_id unless @job_id.nil?
+    hash['cached_catalog_status'] = @cached_catalog_status unless @cached_catalog_status.nil?
+    hash
   end
 
   # @return [String] the host name
@@ -253,15 +374,15 @@ class Puppet::Transaction::Report
   def summary
     report = raw_summary
 
-    ret = ""
-    report.keys.sort { |a,b| a.to_s <=> b.to_s }.each do |key|
+    ret = ''.dup
+    report.keys.sort_by(&:to_s).each do |key|
       ret += "#{Puppet::Util::Metric.labelize(key)}:\n"
 
-      report[key].keys.sort { |a,b|
+      report[key].keys.sort { |a, b|
         # sort by label
-        if a == :total
+        if a == TOTAL
           1
-        elsif b == :total
+        elsif b == TOTAL
           -1
         else
           report[key][a].to_s <=> report[key][b].to_s
@@ -269,6 +390,7 @@ class Puppet::Transaction::Report
       }.each do |label|
         value = report[key][label]
         next if value == 0
+
         value = "%0.2f" % value if value.is_a?(Float)
         ret += "   %15s %s\n" % [Puppet::Util::Metric.labelize(label) + ":", value]
       end
@@ -281,15 +403,25 @@ class Puppet::Transaction::Report
   # @api public
   #
   def raw_summary
-    report = { "version" => { "config" => configuration_version, "puppet" => Puppet.version  } }
+    report = {
+      "version" => {
+        "config" => configuration_version,
+        "puppet" => Puppet.version
+      },
+      "application" => {
+        "run_mode" => Puppet.run_mode.name.to_s,
+        "initial_environment" => initial_environment,
+        "converged_environment" => environment
+      }
+    }
 
-    @metrics.each do |name, metric|
+    @metrics.each do |_name, metric|
       key = metric.name.to_s
       report[key] = {}
-      metric.values.each do |name, label, value|
-        report[key][name.to_s] = value
+      metric.values.each do |metric_name, _label, value|
+        report[key][metric_name.to_s] = value
       end
-      report[key]["total"] = 0 unless key == "time" or report[key].include?("total")
+      report[key][TOTAL] = 0 unless key == "time" or report[key].include?(TOTAL)
     end
     (report["time"] ||= {})["last_run"] = Time.now.tv_sec
     report
@@ -307,37 +439,36 @@ class Puppet::Transaction::Report
   #
   def exit_status
     status = 0
-    status |= 2 if @metrics["changes"]["total"] > 0
-    status |= 4 if @metrics["resources"]["failed"] > 0
-    status |= 4 if @metrics["resources"]["failed_to_restart"] > 0
+    if @metrics["changes"] && @metrics["changes"][TOTAL] &&
+       @metrics["resources"] && @metrics["resources"]["failed"] &&
+       @metrics["resources"]["failed_to_restart"]
+      status |= 2 if @metrics["changes"][TOTAL] > 0
+      status |= 4 if @metrics["resources"]["failed"] > 0
+      status |= 4 if @metrics["resources"]["failed_to_restart"] > 0
+    else
+      status = -1
+    end
     status
-  end
-
-  # @api private
-  #
-  def to_yaml_properties
-    super - [:@external_times]
-  end
-
-  def self.supported_formats
-    [:pson, :yaml]
-  end
-
-  def self.default_format
-    Puppet[:report_serialization_format].intern
   end
 
   private
 
+  # Mark the report as corrective, if there are any resource_status marked corrective.
+  def calculate_report_corrective_change
+    @corrective_change = resource_statuses.any? do |_name, status|
+      status.corrective_change
+    end
+  end
+
   def calculate_change_metric
-    resource_statuses.map { |name, status| status.change_count || 0 }.inject(0) { |a,b| a+b }
+    resource_statuses.map { |_name, status| status.change_count || 0 }.inject(0) { |a, b| a + b }
   end
 
   def calculate_event_metrics
     metrics = Hash.new(0)
-    %w{total failure success}.each { |m| metrics[m] = 0 }
-    resource_statuses.each do |name, status|
-      metrics["total"] += status.events.length
+    %w[total failure success].each { |m| metrics[m] = 0 }
+    resource_statuses.each do |_name, status|
+      metrics[TOTAL] += status.events.length
       status.events.each do |event|
         metrics[event.status] += 1
       end
@@ -348,7 +479,7 @@ class Puppet::Transaction::Report
 
   def calculate_resource_metrics
     metrics = {}
-    metrics["total"] = resource_statuses.length
+    metrics[TOTAL] = resource_statuses.length
 
     # force every resource key in the report to be present
     # even if no resources is in this given state
@@ -356,7 +487,7 @@ class Puppet::Transaction::Report
       metrics[state.to_s] = 0
     end
 
-    resource_statuses.each do |name, status|
+    resource_statuses.each do |_name, status|
       Puppet::Resource::Status::STATES.each do |state|
         metrics[state.to_s] += 1 if status.send(state)
       end
@@ -367,16 +498,13 @@ class Puppet::Transaction::Report
 
   def calculate_time_metrics
     metrics = Hash.new(0)
-    resource_statuses.each do |name, status|
-      type = Puppet::Resource.new(name).type
-      metrics[type.to_s.downcase] += status.evaluation_time if status.evaluation_time
+    resource_statuses.each do |_name, status|
+      metrics[status.resource_type.downcase] += status.evaluation_time if status.evaluation_time
     end
 
     @external_times.each do |name, value|
       metrics[name.to_s.downcase] = value
     end
-
-    metrics["total"] = metrics.values.inject(0) { |a,b| a+b }
 
     metrics
   end
