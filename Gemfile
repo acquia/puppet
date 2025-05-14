@@ -52,6 +52,8 @@ group(:development, :test) do
 
   gem 'webmock'
   gem 'vcr', '~> 2.9'
+
+  gem "sorted_set", "~> 1.0", :require => false
 end
 
 group(:development) do
