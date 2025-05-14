@@ -274,6 +274,8 @@ class Puppet::Resource
 
       @type = munge_type_name(@type)
 
+      rt = resource_type
+
       self.kind = self.class.to_kind(rt) unless kind
       if strict? && rt.nil?
         if self.class?
@@ -311,6 +313,13 @@ class Puppet::Resource
   # Find our resource.
   def resolve
     catalog ? catalog.resource(to_s) : nil
+  end
+
+  # The resource's type implementation
+  # @return [Puppet::Type, Puppet::Resource::Type]
+  # @api private
+  def resource_type
+    @rstype ||= self.class.resource_type(type, title, environment)
   end
 
   # A resource is an application component if it exports or consumes
