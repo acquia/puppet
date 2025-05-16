@@ -460,7 +460,7 @@ class Puppet::Resource
   def to_ral
     if self.kind == COMPILABLE_TYPE_STRING
       typeklass = Puppet::Type.type(self.type)
-    elsif self.catalog && self.catalog.catalog_format >= 2
+    elsif catalog && catalog.catalog_format >= 2
       typeklass = Puppet::Type.type(:component)
     else
       typeklass =  Puppet::Type.type(self.type) || Puppet::Type.type(:component)
