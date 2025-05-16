@@ -2,6 +2,7 @@ require 'puppet'
 require 'puppet/util/tagging'
 require 'puppet/parameter'
 require 'puppet/data_providers'
+require 'puppet/compilable_resource_type' # Added require statement
 
 # The simplest resource class.  Eventually it will function as the
 # base class for all resource-like behaviour.
