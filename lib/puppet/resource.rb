@@ -178,18 +178,6 @@ class Puppet::Resource
     end
   end
 
-  def self.to_kind(resource_type)
-    if resource_type == CLASS_STRING
-      CLASS_STRING
-    elsif resource_type.is_a?(Puppet::Resource::Type) && resource_type.type == :definition
-      DEFINED_TYPE_STRING
-    elsif resource_type.is_a?(Puppet::CompilableResourceType)
-      COMPILABLE_TYPE_STRING
-    else
-      UNKNOWN_TYPE_STRING
-    end
-  end
-
   # Iterate over each param/value pair, as required for Enumerable.
   def each
     parameters.each { |p,v| yield p, v }
