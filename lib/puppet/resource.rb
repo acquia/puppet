@@ -2,6 +2,7 @@ require 'puppet'
 require 'puppet/util/tagging'
 require 'puppet/util/pson'
 require 'puppet/parameter'
+require 'puppet/compilable_resource_type'
 
 # The simplest resource class.  Eventually it will function as the
 # base class for all resource-like behaviour.
@@ -259,7 +260,7 @@ class Puppet::Resource
       @rstype = src.resource_type
       @type = src.type
       @title = src.title
-
+    end
     # Set things like strictness first.
     attributes.each do |attr, value|
       next if attr == :parameters
@@ -655,8 +656,18 @@ class Puppet::Resource
       self[param] = value
     end
   end
+  
+  # @api private
+  def self.type_and_title(type, title)
+    type, title = extract_type_and_title(type, title)
+    type = munge_type_name(type)
+    if type == TYPE_CLASS
+      title = title == '' ? :main : munge_type_name(title)
+    end
+    [type, title]
+  end
 
-  def extract_type_and_title(argtype, argtitle)
+  def self.extract_type_and_title(argtype, argtitle)
     if    (argtype.nil? || argtype == :component || argtype == :whit) &&
            argtitle =~ /^([^\[\]]+)\[(.+)\]$/m                 then [ $1,                 $2            ]
     elsif argtitle.nil? && argtype =~ /^([^\[\]]+)\[(.+)\]$/m  then [ $1,                 $2            ]
