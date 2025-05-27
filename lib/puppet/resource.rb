@@ -267,9 +267,6 @@ class Puppet::Resource
       send(attr.to_s + "=", value)
     end
 
-    @type, @title = extract_type_and_title(type, title)
-
-    @type = munge_type_name(@type)
 
     if self.class?
       @title = :main if @title == ""
@@ -666,7 +663,7 @@ class Puppet::Resource
     end
     [type, title]
   end
-
+  
   def self.extract_type_and_title(argtype, argtitle)
     if    (argtype.nil? || argtype == :component || argtype == :whit) &&
            argtitle =~ /^([^\[\]]+)\[(.+)\]$/m                 then [ $1,                 $2            ]
