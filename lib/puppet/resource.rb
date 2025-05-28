@@ -59,8 +59,9 @@ class Puppet::Resource
       params.each { |param, value| resource[param] = value }
     end
 
-    if tags = data['tags']
-      tags.each { |tag| resource.tag(tag) }
+    tags = data['tags']
+    if tags
+      tag(*tags)
     end
 
     ATTRIBUTES.each do |a|
@@ -87,7 +88,6 @@ class Puppet::Resource
       hash[param.to_s] = value
       hash
     end
-
     data["exported"] ||= false
 
     params = self.to_hash.inject({}) do |hash, ary|
@@ -280,9 +280,8 @@ class Puppet::Resource
     if resource_type && resource_type.respond_to?(:deprecate_params)
         resource_type.deprecate_params(title, attributes[:parameters])
     end
-
-    tag(self.type)
-    tag(self.title) if valid_tag?(self.title)
+    tag(type)
+    tag(title) if valid_tag?(title)
 
     @reference = self # for serialization compatibility with 0.25.x
     if strict? and ! resource_type
@@ -347,7 +346,6 @@ class Puppet::Resource
           rt.deprecate_params(title, params)
         end
       end
-
       tag(self.type)
       tag_if_valid(self.title)
     end
@@ -677,7 +675,7 @@ class Puppet::Resource
     end
   end
 
-  def munge_type_name(value)
+  def self.munge_type_name(value)
     return :main if value == :main
     return "Class" if value == "" or value.nil? or value.to_s.downcase == "component"
 

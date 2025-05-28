@@ -23,6 +23,25 @@ module Puppet::Util::Tagging
     end
   end
 
+  # Add a name to the current tag set. Silently ignore names that does not
+  # represent valid tags.
+  # 
+  # Use this method instead of doing this:
+  #
+  #  tag(name) if is_valid?(name)
+  #
+  # since that results in testing the same string twice
+  #
+  def tag_if_valid(name)
+    if name.is_a?(String) && name =~ ValidTagRegex
+      name = name.downcase
+      @tags ||= new_tags
+      if @tags.add?(name) && name.include?('::')
+        @tags.merge(name.split('::'))
+      end
+    end
+  end
+
   # Is the receiver tagged with the given tags?
   def tagged?(*tags)
     not ( self.tags & tags.flatten.collect { |t| t.to_s } ).empty?
