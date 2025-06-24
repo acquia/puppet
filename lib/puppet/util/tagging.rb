@@ -33,7 +33,7 @@ module Puppet::Util::Tagging
   # since that results in testing the same string twice
   #
   def tag_if_valid(name)
-    if name.is_a?(String) && !name.empty? && name =~ ValidTagRegex
+    if name.is_a?(String) && name =~ ValidTagRegex
       name = name.downcase
       @tags ||= new_tags
       if @tags.add?(name) && name.include?('::')
