@@ -68,6 +68,7 @@ group(:extra) do
   gem "rest-client", '~> 1.8.0', :require => false
   gem "stomp", :require => false
   gem "tzinfo", :require => false
+  gem 'json', '= 2.19.2', :require => false
   case RUBY_PLATFORM
   when 'java'
     gem "jdbc-sqlite3", :require => false
