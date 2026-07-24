@@ -15,6 +15,6 @@ group :metrics do
 end
 
 group :doc do
-  gem 'yard', '~> 0.8', :platform => [ :mri_19, :mri_20, :mri_21 ]
+  gem 'yard', '0.9.44', :platform => [ :mri_19, :mri_20, :mri_21 ]
   gem 'redcarpet',      :platform => [ :mri_19, :mri_20, :mri_21 ]
 end

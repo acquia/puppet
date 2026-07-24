@@ -13,7 +13,7 @@ end
 # C Ruby (MRI) or Rubinius, but NOT Windows
 platforms :ruby do
   gem 'pry', :group => :development
-  gem 'yard', :group => :development
+  gem 'yard', '0.9.44', :group => :development
   gem 'redcarpet', '~> 3.5.1', :group => :development
   gem "racc", "1.8.1", :group => :development
 
@@ -75,7 +75,7 @@ group(:extra) do
     gem "msgpack-jruby", :require => false
   else
     gem "sqlite3", :require => false
-    gem "msgpack", :require => false
+    gem "msgpack", '1.8.2', :require => false
   end
 end
 
