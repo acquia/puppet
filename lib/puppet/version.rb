@@ -7,7 +7,7 @@
 
 
 module Puppet
-  PUPPETVERSION = '3.7.2.pc8916.acquia1'
+  PUPPETVERSION = '3.7.2.acquia8'
 
   ##
   # version is a public API method intended to always provide a fast and
