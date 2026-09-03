@@ -74,7 +74,7 @@ group(:extra) do
     gem "jdbc-sqlite3", :require => false
     gem "msgpack-jruby", :require => false
   else
-    gem "sqlite3", :require => false
+    gem "sqlite3", '2.6.0', :require => false
     gem "msgpack", '1.8.2', :require => false
   end
 end
